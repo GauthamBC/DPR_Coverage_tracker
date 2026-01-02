@@ -10,19 +10,22 @@ RUN_ENDPOINT = "https://api.apify.com/v2/acts/apify~google-search-scraper/run-sy
 
 st.title("DPR Coverage Tracker — Preview")
 
-# --- Inputs
+# --------------------
+# UI: Inputs
+# --------------------
 queries_text = st.text_area(
     "Queries (one per line)",
     value='("Action Network") ("new study" OR survey OR report OR findings) -site:actionnetwork.com',
     height=120,
 )
 
-colA, colB, colC = st.columns(3)
-with colA:
+c1, c2, c3 = st.columns(3)
+with c1:
     max_pages = st.slider("Max pages per query", 1, 5, 1)
-with colB:
-    country_code = st.text_input("Country code", "US")
-with colC:
+with c2:
+    # IMPORTANT: Apify expects lowercase country codes like "us", "gb", "ie"
+    country_code = st.selectbox("Country", ["us", "gb", "ie", "ca", "au", ""], index=0)
+with c3:
     exclude_actionnetwork_org = st.checkbox("Exclude actionnetwork.org results", value=True)
 
 date_mode = st.selectbox(
@@ -35,6 +38,8 @@ after_date = None
 before_date = None
 quick_date_range = None
 
+# Map UI to Apify actor fields (supported by this actor)
+# quickDateRange examples commonly supported: h24, h48, d7, d30, y1
 if date_mode == "Last 24 hours":
     quick_date_range = "h24"
 elif date_mode == "Last 48 hours":
@@ -46,39 +51,41 @@ elif date_mode == "Last 30 days":
 elif date_mode == "Last 12 months":
     quick_date_range = "y1"
 elif date_mode == "Custom range":
-    c1, c2 = st.columns(2)
-    with c1:
-        after_date = st.date_input("After date (start)", value=date.today())
-    with c2:
-        before_date = st.date_input("Before date (end)", value=date.today())
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        after_date = st.date_input("Start date", value=date.today())
+    with cc2:
+        before_date = st.date_input("End date", value=date.today())
     if after_date and before_date and after_date > before_date:
         st.warning("Start date must be on or before end date.")
 
 run_btn = st.button("Run search")
 
-# --- Helpers
+# --------------------
+# Helpers
+# --------------------
 def run_actor():
     payload = {
-        # IMPORTANT: this actor expects queries as a STRING (one per line)
+        # Actor expects queries as a STRING (one per line)
         "queries": queries_text,
         "maxPagesPerQuery": max_pages,
-        "countryCode": country_code.strip().upper() if country_code else "US",
     }
 
-    # Date filters supported by this actor:
-    # - quickDateRange (h24, d7, m1, y1, etc.)
-    # - afterDate / beforeDate (YYYY-MM-DD or relative like "8 days")
+    # Only include countryCode if set ("" means default)
+    if country_code != "":
+        payload["countryCode"] = country_code  # already lowercase from selectbox
+
+    # Date filters
     if quick_date_range:
         payload["quickDateRange"] = quick_date_range
     if date_mode == "Custom range" and after_date and before_date and after_date <= before_date:
         payload["afterDate"] = after_date.strftime("%Y-%m-%d")
         payload["beforeDate"] = before_date.strftime("%Y-%m-%d")
 
-    headers = {"Authorization": f"Bearer {APIFY_TOKEN}"}  # recommended auth style
+    headers = {"Authorization": f"Bearer {APIFY_TOKEN}"}
     r = requests.post(RUN_ENDPOINT, headers=headers, json=payload, timeout=180)
 
     if r.status_code >= 400:
-        # show the real Apify error body
         try:
             return None, r.status_code, r.json()
         except Exception:
@@ -88,10 +95,16 @@ def run_actor():
 
 
 def flatten(items):
+    """
+    Flattens Apify output like you posted:
+    items[i].searchQuery.term
+    items[i].organicResults[]
+    """
     rows = []
-    for item in items:
+    for item in items or []:
         term = (item.get("searchQuery") or {}).get("term") or ""
         organic = item.get("organicResults") or []
+
         for r in organic:
             rows.append(
                 {
@@ -102,6 +115,7 @@ def flatten(items):
                     "description": r.get("description"),
                     "date": r.get("date"),
                     "position": r.get("position"),
+                    "type": r.get("type"),
                 }
             )
 
@@ -115,17 +129,31 @@ def flatten(items):
     if exclude_actionnetwork_org:
         df = df[~df["url"].str.contains(r"actionnetwork\.org", case=False, na=False)]
 
-    return df
+    # Optional: basic “likely PR-ish” tag
+    kw = ["new study", "survey", "report", "findings", "new research", "announced", "press release"]
+    df["likely_pr"] = df["description"].fillna("").str.lower().apply(lambda s: any(k in s for k in kw))
+
+    # Nice column order
+    cols = ["likely_pr", "query", "title", "date", "position", "url", "displayedUrl", "description"]
+    for c in cols:
+        if c not in df.columns:
+            df[c] = None
+    return df[cols]
 
 
-# --- Run + Preview
+# --------------------
+# Run + Preview
+# --------------------
 if run_btn:
     with st.spinner("Running Apify actor..."):
         items, err_code, err_body = run_actor()
 
     if err_code:
         st.error(f"Apify error ({err_code})")
-        st.json(err_body) if isinstance(err_body, dict) else st.code(str(err_body))
+        if isinstance(err_body, dict):
+            st.json(err_body)
+        else:
+            st.code(str(err_body))
         st.stop()
 
     st.success(f"Returned {len(items)} SERP page(s).")
