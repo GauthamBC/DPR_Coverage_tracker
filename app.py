@@ -26,10 +26,14 @@ def run_actor():
         "safeSearch": "off",
     }
 
-    response = requests.post(url, json=payload, timeout=120)
+    response = requests.post(
+    url,
+    json=payload,
+    headers={"Content-Type": "application/json"},
+    timeout=120,
+    )
     response.raise_for_status()
     return response.json()
-
 
 st.title("Apify Google Search Scraper — Output Preview")
 
