@@ -13,31 +13,25 @@ query = st.text_input(
     value='("Action Network") ("new study" OR survey OR report OR findings) -site:actionnetwork.com'
 )
 
-max_pages = st.slider("Max pages per query", 1, 5, 1)
-
 def run_actor(q: str):
     payload = {
-        # IMPORTANT: this actor expects queries as a STRING
-        # Put one query per line if you want multiple queries.
         "queries": q,
-        "maxPagesPerQuery": max_pages,
-        "countryCode": "US",
-        "languageCode": "en",
-        "safeSearch": "off",
+        "maxPagesPerQuery": 1,
     }
+
     r = requests.post(RUN_ENDPOINT, params={"token": APIFY_TOKEN}, json=payload, timeout=120)
-    r.raise_for_status()
+
+    if r.status_code >= 400:
+        st.error(f"Apify returned {r.status_code}")
+        try:
+            st.json(r.json())
+        except Exception:
+            st.code(r.text)
+        st.stop()
+
     return r.json()
 
 if st.button("Run test"):
-    try:
-        with st.spinner("Running actor..."):
-            items = run_actor(query)
-
-        st.success(f"Success! Items returned: {len(items)}")
-        st.subheader("Raw dataset items (first 3)")
-        st.json(items[:3])
-
-    except Exception as e:
-        st.error("Apify request failed")
-        st.exception(e)
+    items = run_actor(query)
+    st.success(f"Success! Items returned: {len(items)}")
+    st.json(items[:3])
