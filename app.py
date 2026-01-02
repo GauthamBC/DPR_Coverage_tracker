@@ -1,56 +1,43 @@
 import requests
 import streamlit as st
 
-st.set_page_config(page_title="Apify Debug", layout="wide")
+st.set_page_config(page_title="Apify Google Scraper Test", layout="wide")
 
-# Change this string anytime you redeploy so you KNOW you're seeing the latest code
-BUILD_ID = "debug-v1"
+APIFY_TOKEN = st.secrets["APIFY_TOKEN"]
+RUN_ENDPOINT = "https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items"
 
-APIFY_TOKEN = st.secrets.get("APIFY_TOKEN", "")
+st.title("Apify Google Search Scraper — Output Preview")
 
-ACTOR_BASE = "https://api.apify.com/v2/acts/apify~google-search-scraper"
-RUN_ENDPOINT = f"{ACTOR_BASE}/run-sync-get-dataset-items"
+query = st.text_input(
+    "Query",
+    value='("Action Network") ("new study" OR survey OR report OR findings) -site:actionnetwork.com'
+)
 
-st.title("Apify Debug")
-st.write("BUILD:", BUILD_ID)
+max_pages = st.slider("Max pages per query", 1, 5, 1)
 
-# Never print the token itself. Print only safe info.
-st.write("Token loaded:", bool(APIFY_TOKEN))
-st.write("Token prefix ok:", APIFY_TOKEN.startswith("apify_api_"))
-st.write("Token length:", len(APIFY_TOKEN))
-
-st.subheader("Endpoints (no token shown)")
-st.code(ACTOR_BASE)
-st.code(RUN_ENDPOINT)
-
-def get_actor():
-    # This should return actor JSON if token+endpoint are good
-    r = requests.get(ACTOR_BASE, params={"token": APIFY_TOKEN}, timeout=60)
-    return r.status_code, r.text
-
-def run_actor():
+def run_actor(q: str):
     payload = {
-        "queries": [
-            {"query": '("Action Network") ("new study" OR survey OR report OR findings) -site:actionnetwork.com'}
-        ],
-        "maxPagesPerQuery": 1,
+        # IMPORTANT: this actor expects queries as a STRING
+        # Put one query per line if you want multiple queries.
+        "queries": q,
+        "maxPagesPerQuery": max_pages,
         "countryCode": "US",
         "languageCode": "en",
         "safeSearch": "off",
     }
     r = requests.post(RUN_ENDPOINT, params={"token": APIFY_TOKEN}, json=payload, timeout=120)
-    return r.status_code, r.text
+    r.raise_for_status()
+    return r.json()
 
-col1, col2 = st.columns(2)
+if st.button("Run test"):
+    try:
+        with st.spinner("Running actor..."):
+            items = run_actor(query)
 
-with col1:
-    if st.button("1) Test GET Actor"):
-        status, text = get_actor()
-        st.write("Status:", status)
-        st.code(text)
+        st.success(f"Success! Items returned: {len(items)}")
+        st.subheader("Raw dataset items (first 3)")
+        st.json(items[:3])
 
-with col2:
-    if st.button("2) Test Run (sync dataset items)"):
-        status, text = run_actor()
-        st.write("Status:", status)
-        st.code(text)
+    except Exception as e:
+        st.error("Apify request failed")
+        st.exception(e)
